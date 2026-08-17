@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+    pandas==2.2.3 \
+    numpy==1.26.4 \
+    scikit-learn==1.5.2 \
+    xgboost==2.1.1 \
+    lightgbm==4.5.0 \
+    joblib==1.4.2 \
+    shap==0.46.0
+
+COPY predict_entrypoint.py /app/predict_entrypoint.py
+COPY explain_entrypoint.py /app/explain_entrypoint.py
+COPY diagnose_shap_entrypoint.py /app/diagnose_shap_entrypoint.py
+
+WORKDIR /app
