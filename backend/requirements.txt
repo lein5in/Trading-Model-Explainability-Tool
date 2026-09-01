@@ -2,7 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-dotenv==1.0.1
 supabase==2.9.0
-yfinance==0.2.44
+yfinance==1.6.0
 pandera==0.20.4
 pandas==2.2.3
 python-multipart==0.0.12
@@ -10,3 +10,5 @@ scikit-learn==1.5.2
 shap==0.46.0
 hmmlearn==0.3.2
 anthropic==0.39.0
+pytest==8.3.3
+email-validator==2.2.0

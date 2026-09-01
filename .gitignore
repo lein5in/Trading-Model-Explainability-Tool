@@ -43,3 +43,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+backend/storage/models/*.pkl
+backend/storage/models/*.joblib
+backend/test_model.pkl

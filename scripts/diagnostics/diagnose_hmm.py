@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from hmmlearn.hmm import GaussianHMM
 from app.regime.hmm_detector import compute_features
-from test_sandbox_e2e import build_synthetic_ohlcv
+from scripts.diagnostics.test_sandbox_e2e import build_synthetic_ohlcv
 
 
 def main():

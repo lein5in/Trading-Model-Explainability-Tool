@@ -11,6 +11,5 @@ RUN pip install --no-cache-dir \
 
 COPY predict_entrypoint.py /app/predict_entrypoint.py
 COPY explain_entrypoint.py /app/explain_entrypoint.py
-COPY diagnose_shap_entrypoint.py /app/diagnose_shap_entrypoint.py
 
 WORKDIR /app

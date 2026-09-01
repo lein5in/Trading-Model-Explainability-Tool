@@ -32,6 +32,10 @@ def build_explainer(model, background_data: pd.DataFrame):
     if is_tree_model(model):
         return shap.TreeExplainer(model), "tree"
     summarized_background = shap.kmeans(background_data, min(50, len(background_data)))
+    if hasattr(model, "predict_proba"):
+        def predict_positive_class_proba(X):
+            return np.asarray(model.predict_proba(X))[:, -1]
+        return shap.KernelExplainer(predict_positive_class_proba, summarized_background), "kernel"
     return shap.KernelExplainer(model.predict, summarized_background), "kernel"
 
 

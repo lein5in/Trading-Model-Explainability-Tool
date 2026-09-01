@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from app.config import SANDBOX_DOCKER_RUNTIME
 
 SANDBOX_IMAGE = "trading-explainability-sandbox"
 DEFAULT_PREDICT_TIMEOUT_SECONDS = 30
@@ -13,7 +14,7 @@ DEFAULT_CPU_LIMIT = "1"
 
 
 def _resolve_runtime() -> str:
-    return os.getenv("SANDBOX_DOCKER_RUNTIME", "runc")
+    return SANDBOX_DOCKER_RUNTIME
 
 
 class SandboxExecutionError(Exception):
@@ -93,12 +94,13 @@ def _run_sandbox(
 def run_predict_in_sandbox(
     model_storage_path: str,
     records: list[dict],
+    signal_type: str,
     timeout_seconds: int = DEFAULT_PREDICT_TIMEOUT_SECONDS,
 ) -> dict:
     result = _run_sandbox(
         entrypoint_script="predict_entrypoint.py",
         model_storage_path=model_storage_path,
-        payload={"records": records},
+        payload={"records": records, "signal_type": signal_type},
         timeout_seconds=timeout_seconds,
     )
     return {"predictions": result["predictions"]}

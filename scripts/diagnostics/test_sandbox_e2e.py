@@ -68,7 +68,7 @@ def main():
     features = ohlcv[["open", "close"]]
     records = features.to_dict(orient="records")
 
-    sandbox_result = run_predict_in_sandbox(registered.storage_path, records)
+    sandbox_result = run_predict_in_sandbox(registered.storage_path, records, "discrete")
 
     backtest_result = run_backtest(
         ohlcv=ohlcv,

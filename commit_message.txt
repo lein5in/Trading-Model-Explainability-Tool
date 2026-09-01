@@ -1,0 +1,46 @@
+Stage 0 + Stage 1.A/1.B: full backend pipeline, Supabase migration, auth, dashboard, and browser-validated fixes
+
+Backend (Stage 0):
+- Model contract (predict() wrapper, discrete/continuous signal validation)
+- Docker/gVisor-ready sandbox for isolated model execution (predict + explain entrypoints)
+- Backtest engine (single-position portfolio, fee/slippage, equity curve, drawdown, CAGR)
+- SHAP explainability (TreeExplainer for tree models, KernelExplainer otherwise, additivity check)
+- HMM regime detection (filtered probabilities via predict_proba, not Viterbi/smoothed)
+- LLM report generation with anti-hallucination prompting (Anthropic API, structured JSON-only input)
+- Core API routes: /models/upload, /analysis/run, /analysis/{id}, /analysis/explain-section
+
+Backend (Stage 1.A):
+- Migrated from in-memory storage to Supabase (registered_models, analysis_results tables, RLS)
+- Supabase Auth wired end-to-end (signup/signin routes, get_current_user_id dependency)
+- Formal pytest suite covering API routes, model contract edge cases, regime detection,
+  SHAP additivity, and synthetic sanity checks
+
+Frontend (Stage 1.B):
+- Routing, auth pages, upload flow, 4-section dashboard (Overview, Features, Trades, Report)
+- Price chart with trade markers, regime bar, SHAP waterfall, equity curve
+- Per-section and per-trade LLM explanation on demand
+
+Browser validation pass and fixes (this session):
+- Fixed trade markers not being clickable in PriceChart (subscribeClick was never wired)
+- Removed dead equity-curve code path in PriceChart (EquityCurveChart already owns this)
+- Added bounds check on shapRowIndex before indexing shap_values
+- Fixed Max Drawdown always rendering red regardless of actual value
+- Added catch-all route redirecting unknown URLs to /
+- Fixed SHAP KernelExplainer/additivity mismatch for non-tree models: explainer was built
+  on model.predict() (discrete labels) while additivity was checked against predict_proba()
+  (continuous), causing spurious additivity failures for any non-tree model exposing
+  predict_proba (e.g. LogisticRegression). Both sides now consistently use predict_proba.
+- Analysis state is now persisted via URL (/dashboard/:analysisId) instead of only React
+  Context, so a page reload restores the full analysis via GET /analysis/{id} instead of
+  bouncing back to the upload page
+- GET /analysis/{id} now also returns model_name (second lookup on registered_models),
+  closing a gap where reloaded dashboards silently lost the model name shown pre-reload
+- Active dashboard section and selected trade are now persisted via search params
+  (?section=&trade=), so a reload restores the exact view instead of resetting to Overview
+- .gitignore updated to exclude backend/storage/models/*.pkl and backend/test_model.pkl
+  (uploaded/generated test artifacts, never source)
+
+Known open items (not yet resolved, tracked for next session):
+- README with disclaimer + yfinance educational-use notice (VISION.md 12.1/12.2) not yet written
+- purge_dev_placeholder.py not yet executed
+- Auth/onboarding UX under reconsideration (possible simplification of the login flow)
