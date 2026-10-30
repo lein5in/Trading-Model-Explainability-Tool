@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
     pandas==2.2.3 \
     numpy==1.26.4 \
@@ -9,7 +13,14 @@ RUN pip install --no-cache-dir \
     joblib==1.4.2 \
     shap==0.46.0
 
-COPY predict_entrypoint.py /app/predict_entrypoint.py
-COPY explain_entrypoint.py /app/explain_entrypoint.py
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp \
+    NUMBA_CACHE_DIR=/tmp/numba \
+    MPLCONFIGDIR=/tmp/matplotlib
+
+COPY __init__.py sandbox_common.py explain_core.py predict_entrypoint.py explain_entrypoint.py /app/app/sandbox/
 
 WORKDIR /app
+
+USER 65534:65534

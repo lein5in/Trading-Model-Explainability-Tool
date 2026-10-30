@@ -1,0 +1,108 @@
+{
+  "models": [
+    {
+      "id": "demo_decision_tree",
+      "name": "Decision tree",
+      "family": "DecisionTreeClassifier",
+      "file": "demo_decision_tree.joblib",
+      "feature_columns": [
+        "rsi_14",
+        "vol_20d",
+        "sma_ratio_20_50",
+        "macd_hist",
+        "ret_lag_5",
+        "atr_14_pct",
+        "ema_ratio_12_26",
+        "ret_lag_1"
+      ],
+      "signal_type": "discrete",
+      "explained_output": "P(buy)",
+      "trained_on": {
+        "ticker": "SPY",
+        "start": "2010-03-16",
+        "end": "2017-12-29",
+        "n_rows": 1964,
+        "label": "next-day close-to-close return > 0",
+        "random_state": 0
+      }
+    },
+    {
+      "id": "demo_logistic_regression",
+      "name": "Logistic regression",
+      "family": "LogisticRegression",
+      "file": "demo_logistic_regression.joblib",
+      "feature_columns": [
+        "rsi_14",
+        "vol_20d",
+        "sma_ratio_20_50",
+        "macd_hist",
+        "ret_lag_5",
+        "atr_14_pct",
+        "ema_ratio_12_26",
+        "ret_lag_1"
+      ],
+      "signal_type": "discrete",
+      "explained_output": "P(buy)",
+      "trained_on": {
+        "ticker": "SPY",
+        "start": "2010-03-16",
+        "end": "2017-12-29",
+        "n_rows": 1964,
+        "label": "next-day close-to-close return > 0",
+        "random_state": 0
+      }
+    },
+    {
+      "id": "demo_mlp",
+      "name": "Small neural network (MLP)",
+      "family": "MLPClassifier",
+      "file": "demo_mlp.joblib",
+      "feature_columns": [
+        "rsi_14",
+        "vol_20d",
+        "sma_ratio_20_50",
+        "macd_hist",
+        "ret_lag_5",
+        "atr_14_pct",
+        "ema_ratio_12_26",
+        "ret_lag_1"
+      ],
+      "signal_type": "discrete",
+      "explained_output": "P(buy)",
+      "trained_on": {
+        "ticker": "SPY",
+        "start": "2010-03-16",
+        "end": "2017-12-29",
+        "n_rows": 1964,
+        "label": "next-day close-to-close return > 0",
+        "random_state": 0
+      }
+    },
+    {
+      "id": "demo_xgboost",
+      "name": "XGBoost",
+      "family": "XGBClassifier",
+      "file": "demo_xgboost.joblib",
+      "feature_columns": [
+        "rsi_14",
+        "vol_20d",
+        "sma_ratio_20_50",
+        "macd_hist",
+        "ret_lag_5",
+        "atr_14_pct",
+        "ema_ratio_12_26",
+        "ret_lag_1"
+      ],
+      "signal_type": "discrete",
+      "explained_output": "P(buy)",
+      "trained_on": {
+        "ticker": "SPY",
+        "start": "2010-03-16",
+        "end": "2017-12-29",
+        "n_rows": 1964,
+        "label": "next-day close-to-close return > 0",
+        "random_state": 0
+      }
+    }
+  ]
+}

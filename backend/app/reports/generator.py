@@ -1,163 +1,91 @@
-import math
+from datetime import datetime, timezone
 import anthropic
-from app.config import ANTHROPIC_API_KEY
-from app.reports.prompts import (
-    REPORT_SYSTEM_PROMPT,
-    EXPLAIN_SECTION_SYSTEM_PROMPT,
-    build_full_report_prompt,
-    build_section_explanation_prompt,
-)
+from app.config import get_settings
+from app.reports.prompts import EXPLAIN_SYSTEM_PROMPT, SYSTEM_PROMPT, TOOL_NAME, section_prompt, section_tool
+from app.reports.slices import SECTION_IDS, build_slices
+from app.reports.verification import verify_numbers
 
-REPORT_MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 2000
-TRADING_PERIODS_PER_YEAR = 252
+DEFAULT_CALL_TIMEOUT_SECONDS = 120.0
+MIN_CALL_TIMEOUT_SECONDS = 1.0
 
 
-class ReportGenerationError(Exception):
-    pass
+class ReportError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
-def _get_client() -> anthropic.Anthropic:
-    if not ANTHROPIC_API_KEY:
-        raise ReportGenerationError("ANTHROPIC_API_KEY is not configured.")
-    return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+def make_client(api_key: str | None, timeout_seconds: float):
+    if not api_key:
+        raise ReportError("report_api_key_missing", "ANTHROPIC_API_KEY is not configured.")
+    return anthropic.Anthropic(api_key=api_key, timeout=timeout_seconds, max_retries=2)
 
 
-def compute_trade_statistics(trades: list) -> dict:
-    if not trades:
-        return {
-            "trade_count": 0,
-            "win_rate": None,
-            "sharpe_ratio": None,
-            "avg_pnl": None,
-            "total_pnl": 0.0,
-        }
-
-    pnls = [t.pnl for t in trades]
-    win_count = sum(1 for pnl in pnls if pnl > 0)
-    win_rate = win_count / len(pnls)
-    total_pnl = sum(pnls)
-    avg_pnl = total_pnl / len(pnls)
-
-    if len(pnls) > 1:
-        mean_pnl = avg_pnl
-        variance = sum((pnl - mean_pnl) ** 2 for pnl in pnls) / (len(pnls) - 1)
-        std_pnl = math.sqrt(variance)
-        sharpe_ratio = (mean_pnl / std_pnl) * math.sqrt(TRADING_PERIODS_PER_YEAR) if std_pnl > 0 else None
-    else:
-        sharpe_ratio = None
-
-    return {
-        "trade_count": len(pnls),
-        "win_rate": round(win_rate, 4),
-        "sharpe_ratio": round(sharpe_ratio, 4) if sharpe_ratio is not None else None,
-        "avg_pnl": round(avg_pnl, 4),
-        "total_pnl": round(total_pnl, 4),
-    }
+def parse_section(response, section_id: str) -> dict:
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason == "max_tokens":
+        raise ReportError("report_truncated", f"The '{section_id}' section hit max_tokens and was truncated.")
+    if stop_reason == "refusal":
+        raise ReportError("report_refused", f"The model declined to write the '{section_id}' section.")
+    blocks = [
+        block for block in (getattr(response, "content", None) or [])
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_NAME
+    ]
+    if len(blocks) != 1:
+        raise ReportError("report_invalid_output", f"Expected one {TOOL_NAME} call for '{section_id}', got {len(blocks)}.")
+    payload = blocks[0].input
+    if not isinstance(payload, dict) or set(payload) != {"id", "title", "text"}:
+        raise ReportError("report_invalid_output", f"The '{section_id}' section does not match the schema.")
+    if payload["id"] != section_id:
+        raise ReportError("report_invalid_output", f"Expected section id '{section_id}', got '{payload['id']}'.")
+    if not all(isinstance(payload[key], str) and payload[key].strip() for key in ("title", "text")):
+        raise ReportError("report_invalid_output", f"The '{section_id}' section has an empty title or text.")
+    return {"id": section_id, "title": payload["title"].strip(), "text": payload["text"].strip()}
 
 
-def compute_regime_behavior(trades: list, regime_per_bar: list, ohlcv_index_by_timestamp: dict) -> dict:
-    regime_pnls = {}
+class ReportService:
+    def __init__(self, client_factory=make_client):
+        self.client_factory = client_factory
 
-    for trade in trades:
-        position = ohlcv_index_by_timestamp.get(trade.entry_timestamp)
-        if position is None:
-            continue
-        regime = regime_per_bar[position]
-        if regime is None:
-            continue
-        regime_pnls.setdefault(regime, []).append(trade.pnl)
+    def write_section(self, client, model: str, max_tokens: int, section_id: str, section_slice: dict, system_prompt: str) -> dict:
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                tools=[section_tool(section_id)],
+                tool_choice={"type": "auto"},
+                messages=[{"role": "user", "content": section_prompt(section_id, section_slice)}],
+            )
+        except anthropic.APIError as exc:
+            raise ReportError("report_api_error", f"Anthropic API call failed: {type(exc).__name__}: {exc}")
+        return parse_section(response, section_id)
 
-    regime_behavior = {}
-    for regime, pnls in regime_pnls.items():
-        regime_behavior[regime] = {
-            "trade_count": len(pnls),
-            "total_pnl": round(sum(pnls), 4),
-            "avg_pnl": round(sum(pnls) / len(pnls), 4),
-        }
+    def generate(self, slices: dict, timeout_seconds: float = DEFAULT_CALL_TIMEOUT_SECONDS) -> dict:
+        settings = get_settings()
+        base = {"model": settings.anthropic_model, "generated_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            client = self.client_factory(settings.anthropic_api_key, max(timeout_seconds, MIN_CALL_TIMEOUT_SECONDS))
+            sections = [
+                self.write_section(client, settings.anthropic_model, settings.report_max_tokens, section_id, slices[section_id], SYSTEM_PROMPT)
+                for section_id in SECTION_IDS
+            ]
+        except ReportError as exc:
+            return {**base, "status": "failed", "sections": [], "verification": None, "error": {"code": exc.code, "message": exc.message}}
+        verification = verify_numbers({section["id"]: section["text"] for section in sections}, slices)
+        return {**base, "status": "ok", "sections": sections, "verification": verification, "error": None}
 
-    return regime_behavior
+    def explain_section(self, slices: dict, section_id: str, timeout_seconds: float = DEFAULT_CALL_TIMEOUT_SECONDS) -> dict:
+        settings = get_settings()
+        client = self.client_factory(settings.anthropic_api_key, timeout_seconds)
+        section = self.write_section(client, settings.anthropic_model, settings.report_max_tokens, section_id, slices[section_id], EXPLAIN_SYSTEM_PROMPT)
+        verification = verify_numbers({section_id: section["text"]}, {section_id: slices[section_id]})
+        return {"section_id": section_id, "title": section["title"], "text": section["text"], "model": settings.anthropic_model, "verification": verification}
 
+    def for_state(self, state) -> dict:
+        slices = build_slices(state.result, state.job.params, state.model_meta)
+        return self.generate(slices, min(state.remaining(), DEFAULT_CALL_TIMEOUT_SECONDS))
 
-def build_notable_trades(trades: list, feature_importance: dict, top_n: int = 3) -> list:
-    sorted_trades = sorted(trades, key=lambda t: abs(t.pnl), reverse=True)
-    top_trades = sorted_trades[:top_n]
-
-    notable = []
-    for t in top_trades:
-        notable.append({
-            "entry_timestamp": str(t.entry_timestamp),
-            "direction": t.direction,
-            "pnl": round(t.pnl, 4),
-            "feature_vector_at_entry": t.feature_vector,
-        })
-    return notable
-
-
-def assemble_report_data(
-    model_name: str,
-    ohlcv,
-    trades: list,
-    feature_importance: dict,
-    regime_result: dict,
-) -> dict:
-    trade_stats = compute_trade_statistics(trades)
-
-    timestamp_to_position = {
-        row["timestamp"]: idx for idx, row in ohlcv.iterrows()
-    }
-
-    regime_behavior = compute_regime_behavior(
-        trades, regime_result["regime_per_bar"], timestamp_to_position
-    )
-
-    notable_trades = build_notable_trades(trades, feature_importance)
-
-    return {
-        "model_name": model_name,
-        "period": {
-            "start": str(ohlcv["timestamp"].iloc[0]),
-            "end": str(ohlcv["timestamp"].iloc[-1]),
-        },
-        "backtest_statistics": trade_stats,
-        "feature_importance": {k: round(v, 4) for k, v in feature_importance.items()},
-        "regime_behavior": regime_behavior,
-        "time_in_regime_pct": regime_result["time_in_regime_pct"],
-        "notable_trades": notable_trades,
-    }
-
-
-def generate_full_report(report_data: dict) -> str:
-    client = _get_client()
-    prompt = build_full_report_prompt(report_data)
-
-    try:
-        response = client.messages.create(
-            model=REPORT_MODEL,
-            max_tokens=MAX_TOKENS,
-            system=REPORT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except Exception as exc:
-        raise ReportGenerationError(f"Anthropic API call failed: {exc}")
-
-    text_blocks = [block.text for block in response.content if block.type == "text"]
-    return "\n".join(text_blocks)
-
-
-def generate_section_explanation(section_name: str, section_data: dict) -> str:
-    client = _get_client()
-    prompt = build_section_explanation_prompt(section_name, section_data)
-
-    try:
-        response = client.messages.create(
-            model=REPORT_MODEL,
-            max_tokens=500,
-            system=EXPLAIN_SECTION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except Exception as exc:
-        raise ReportGenerationError(f"Anthropic API call failed: {exc}")
-
-    text_blocks = [block.text for block in response.content if block.type == "text"]
-    return "\n".join(text_blocks)
+    def for_row(self, row: dict) -> dict:
+        return self.generate(build_slices(row["result"], row.get("params") or {}, row.get("model_meta") or {}))

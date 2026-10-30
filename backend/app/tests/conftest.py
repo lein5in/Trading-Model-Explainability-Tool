@@ -1,17 +1,46 @@
+import os
 import subprocess
-import uuid
 import pytest
-from supabase import create_client
-from app.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+from fastapi.testclient import TestClient
+
+DOCKER_SKIP_REASON = "requires_docker: the Docker daemon is not running or not reachable (docker info failed)."
+
+ISOLATED_ENV_VARS = (
+    "CORS_ORIGINS",
+    "ALLOW_UPLOAD",
+    "TRUST_PROXY",
+    "IP_HASH_SALT",
+    "RATE_LIMIT_RUNS",
+    "RATE_LIMIT_WINDOW_SECONDS",
+    "DAILY_ANALYSIS_CAP",
+    "MAX_DATE_RANGE_YEARS",
+    "MAX_MODEL_FILE_BYTES",
+    "MAX_FEATURES",
+    "MAX_CSV_BYTES",
+    "MAX_CSV_ROWS",
+    "SANDBOX_OUTPUT_CAP_BYTES",
+    "SHAP_SAMPLE_SIZE",
+    "SHAP_MIN_ROWS_PER_REGIME",
+    "SHAP_LOW_SAMPLE_THRESHOLD",
+    "SHAP_MAX_TRADE_ROWS",
+    "SHAP_BACKGROUND_ROWS",
+    "SHAP_KERNEL_NSAMPLES",
+    "SHAP_KERNEL_BACKGROUND_SIZE",
+    "JOB_TIMEOUT_SECONDS",
+    "MAX_CONCURRENT_JOBS",
+    "CONTINUOUS_SIGNAL_DEAD_ZONE",
+    "PREFLIGHT_ROWS",
+    "REPORT_MAX_TOKENS",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+)
 
 
 def _docker_daemon_available() -> bool:
     try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=5,
-        )
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=15)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -19,35 +48,46 @@ def _docker_daemon_available() -> bool:
 
 DOCKER_DAEMON_AVAILABLE = _docker_daemon_available()
 
-requires_docker = pytest.mark.skipif(
-    not DOCKER_DAEMON_AVAILABLE,
-    reason="Docker daemon is not running or not reachable.",
-)
+requires_docker = pytest.mark.requires_docker
 
 
-def create_test_user_and_get_token() -> str:
-    admin_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-    unique_id = uuid.uuid4().hex[:12]
-    email = f"pytest_{unique_id}@example.com"
-    password = f"Pytest_{unique_id}!"
-
-    admin_client.auth.admin.create_user(
-        {"email": email, "password": password, "email_confirm": True}
-    )
-
-    signin_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-    signin_response = signin_client.auth.sign_in_with_password(
-        {"email": email, "password": password}
-    )
-
-    return signin_response.session.access_token
+def pytest_configure(config):
+    os.environ["ENVIRONMENT"] = "test"
+    os.environ["SANDBOX_DOCKER_RUNTIME"] = "runc"
 
 
-@pytest.fixture(scope="session")
-def auth_headers():
-    try:
-        access_token = create_test_user_and_get_token()
-    except Exception as exc:
-        pytest.skip(f"Could not create Supabase test user: {exc}")
+def pytest_collection_modifyitems(config, items):
+    if DOCKER_DAEMON_AVAILABLE:
+        return
+    skip_marker = pytest.mark.skip(reason=DOCKER_SKIP_REASON)
+    for item in items:
+        if "requires_docker" in item.keywords:
+            item.add_marker(skip_marker)
 
-    return {"Authorization": f"Bearer {access_token}"}
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch):
+    for name in ISOLATED_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("SANDBOX_DOCKER_RUNTIME", "runc")
+
+
+@pytest.fixture
+def make_api():
+    from app.db.repository import InMemoryRepository
+    from app.main import build_services, create_app
+
+    created = []
+
+    def factory(run_job="noop", repository=None, **service_overrides):
+        repo = repository if repository is not None else InMemoryRepository()
+        job = (lambda analysis_job: None) if run_job == "noop" else run_job
+        services = build_services(repository=repo, run_job=job, **service_overrides)
+        client = TestClient(create_app(services))
+        created.append(services)
+        return client, services
+
+    yield factory
+    for services in created:
+        services.job_manager.shutdown()

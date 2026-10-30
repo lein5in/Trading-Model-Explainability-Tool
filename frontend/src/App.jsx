@@ -1,40 +1,26 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AnalysisProvider } from './lib/AnalysisContext'
-import { AuthProvider } from './lib/AuthContext'
-import ProtectedRoute from './components/ProtectedRoute'
-import AuthPage from './pages/AuthPage'
-import UploadPage from './pages/UploadPage'
-import DashboardPage from './pages/DashboardPage'
+import { BrowserRouter, Route, Routes, useParams } from 'react-router-dom'
+import Layout from './components/Layout.jsx'
+import { DASHBOARD_TABS } from './config.js'
+import AnalysisPage from './pages/AnalysisPage.jsx'
+import HomePage from './pages/HomePage.jsx'
+import NotFoundPage from './pages/NotFoundPage.jsx'
 
-function App() {
-  return (
-    <AuthProvider>
-      <AnalysisProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/auth" element={<AuthPage />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <UploadPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard/:analysisId"
-              element={
-                <ProtectedRoute>
-                  <DashboardPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </AnalysisProvider>
-    </AuthProvider>
-  )
+function AnalysisRoute() {
+  const { id, tab } = useParams()
+  if (tab !== undefined && !DASHBOARD_TABS.includes(tab)) return <NotFoundPage />
+  return <AnalysisPage key={id} id={id} tab={tab || 'overview'} />
 }
 
-export default App
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<HomePage />} />
+          <Route path="analysis/:id/:tab?" element={<AnalysisRoute />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  )
+}

@@ -1,137 +1,98 @@
-const API_BASE_URL = 'http://127.0.0.1:8000'
-const TOKEN_STORAGE_KEY = 'tme_access_token'
+import { REPORT_TIMEOUT_MS, REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../config.js'
 
-export function setAccessToken(token) {
-  localStorage.setItem(TOKEN_STORAGE_KEY, token)
+export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
+
+export function resolveBaseUrl(value) {
+  const base = typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_API_BASE_URL
+  return base.replace(/\/+$/, '')
 }
 
-export function getAccessToken() {
-  return localStorage.getItem(TOKEN_STORAGE_KEY)
-}
-
-export function clearAccessToken() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY)
-}
-
-function authHeaders() {
-  const token = getAccessToken()
-  if (!token) {
-    return {}
+export class ApiError extends Error {
+  constructor({ status = 0, code = 'unknown_error', message = 'Unexpected error.', details = null } = {}) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.details = details
   }
-  return { Authorization: `Bearer ${token}` }
 }
 
-export async function signUp({ email, password }) {
-  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
+export const NETWORK_CODES = ['network_error', 'request_timeout']
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Sign up failed with status ${response.status}`)
+export function isNetworkError(error) {
+  return error instanceof ApiError && NETWORK_CODES.includes(error.code)
+}
+
+async function readJson(response) {
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
   }
+}
 
-  const data = await response.json()
-  if (data.session) {
-    setAccessToken(data.session.access_token)
+export function parseErrorBody(status, body) {
+  if (body && typeof body === 'object' && typeof body.code === 'string') {
+    return new ApiError({
+      status,
+      code: body.code,
+      message: typeof body.message === 'string' ? body.message : `Request failed with status ${status}.`,
+      details: body.details ?? null,
+    })
   }
-  return data
+  return new ApiError({ status, code: 'http_error', message: `Request failed with status ${status}.` })
 }
 
-export async function signIn({ email, password }) {
-  const response = await fetch(`${API_BASE_URL}/auth/signin`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
+export function createApiClient({ baseUrl, fetchImpl } = {}) {
+  const root = resolveBaseUrl(baseUrl)
+  const doFetch = fetchImpl || ((...args) => globalThis.fetch(...args))
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Sign in failed with status ${response.status}`)
-  }
-
-  const data = await response.json()
-  setAccessToken(data.session.access_token)
-  return data
-}
-
-export function signOut() {
-  clearAccessToken()
-}
-
-export async function uploadModel({ name, signalType, expectedColumns, file }) {
-  const formData = new FormData()
-  formData.append('name', name)
-  formData.append('signal_type', signalType)
-  formData.append('expected_columns', expectedColumns.join(','))
-  formData.append('file', file)
-
-  const response = await fetch(`${API_BASE_URL}/models/upload`, {
-    method: 'POST',
-    headers: { ...authHeaders() },
-    body: formData,
-  })
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Upload failed with status ${response.status}`)
-  }
-
-  return response.json()
-}
-
-export async function runAnalysis({ modelId, ticker, start, end, signalType, featureColumns }) {
-  const response = await fetch(`${API_BASE_URL}/analysis/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({
-      model_id: modelId,
-      ticker,
-      start,
-      end,
-      signal_type: signalType,
-      feature_columns: featureColumns,
-    }),
-  })
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Analysis failed with status ${response.status}`)
+  async function request(path, { method = 'GET', json, formData, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const init = { method, signal: controller.signal, headers: { Accept: 'application/json' } }
+    if (json !== undefined) {
+      init.headers['Content-Type'] = 'application/json'
+      init.body = JSON.stringify(json)
+    } else if (formData !== undefined) {
+      init.body = formData
+    }
+    let response
+    try {
+      response = await doFetch(`${root}${path}`, init)
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') {
+        throw new ApiError({ code: 'request_timeout', message: `The server did not answer within ${Math.round(timeoutMs / 1000)} seconds.` })
+      }
+      throw new ApiError({ code: 'network_error', message: 'The server could not be reached.' })
+    } finally {
+      clearTimeout(timer)
+    }
+    const body = await readJson(response).catch(() => undefined)
+    if (!response.ok) throw parseErrorBody(response.status, body)
+    if (body === undefined) {
+      throw new ApiError({ status: response.status, code: 'invalid_response', message: 'The server returned an unreadable response.' })
+    }
+    return body
   }
 
-  return response.json()
-}
+  const id = (value) => encodeURIComponent(value)
 
-export async function getAnalysis({ analysisId }) {
-  const response = await fetch(`${API_BASE_URL}/analysis/${analysisId}`, {
-    headers: { ...authHeaders() },
-  })
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Fetching analysis failed with status ${response.status}`)
+  return {
+    baseUrl: root,
+    request,
+    health: () => request('/health'),
+    indicators: () => request('/indicators'),
+    demoModels: () => request('/demo-models'),
+    runAnalysis: (formData) => request('/analysis/run', { method: 'POST', formData, timeoutMs: UPLOAD_TIMEOUT_MS }),
+    status: (analysisId) => request(`/analysis/${id(analysisId)}/status`),
+    analysis: (analysisId) => request(`/analysis/${id(analysisId)}`),
+    regenerateReport: (analysisId) => request(`/analysis/${id(analysisId)}/report`, { method: 'POST', timeoutMs: REPORT_TIMEOUT_MS }),
+    explainSection: (analysisId, sectionId) =>
+      request(`/analysis/${id(analysisId)}/explain-section`, { method: 'POST', json: { section_id: sectionId }, timeoutMs: REPORT_TIMEOUT_MS }),
   }
-
-  return response.json()
 }
 
-export async function explainSection({ analysisId, sectionName, tradeIndex }) {
-  const response = await fetch(`${API_BASE_URL}/analysis/explain-section`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({
-      analysis_id: analysisId,
-      section_name: sectionName,
-      trade_index: tradeIndex ?? null,
-    }),
-  })
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new Error(errorBody.detail || `Section explanation failed with status ${response.status}`)
-  }
-
-  return response.json()
-}
+export const api = createApiClient({ baseUrl: import.meta.env.VITE_API_BASE_URL })
