@@ -42,13 +42,20 @@ describe('describeFailure', () => {
     expect(result.facts.map((fact) => fact.value)).toEqual(['8', '5'])
   })
 
-  it('shows the max gap and the limit for an additivity failure', () => {
-    const result = describeFailure({ code: 'shap_additivity_failed', message: 'x', details: { max_gap: 0.034 } })
+  it('shows the max gap and the limit from the error details for an additivity failure', () => {
+    const result = describeFailure({ code: 'shap_additivity_failed', message: 'x', details: { max_gap: 0.034, epsilon: 0.005 } })
     expect(result.title).toMatch(/SHAP check failed/)
     expect(result.facts).toEqual([
       { label: 'Largest gap', value: '0.034', mono: true },
-      { label: 'Limit', value: String(SHAP_ADDITIVITY_LIMIT), mono: true },
+      { label: 'Limit', value: '0.005', mono: true },
     ])
+  })
+
+  it('falls back to the configured limit when the additivity failure has no epsilon', () => {
+    for (const epsilon of [undefined, null, 'abc', Number.NaN]) {
+      const result = describeFailure({ code: 'shap_additivity_failed', message: 'x', details: { max_gap: 0.034, epsilon } })
+      expect(result.facts[1]).toEqual({ label: 'Limit', value: String(SHAP_ADDITIVITY_LIMIT), mono: true })
+    }
   })
 
   it('covers timeout, interrupted, data, rate limit and daily cap codes', () => {

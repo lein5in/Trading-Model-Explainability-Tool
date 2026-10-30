@@ -108,7 +108,8 @@ export function describeFailure(error) {
   } else if (code === 'shap_additivity_failed') {
     message = 'The contributions did not add up to the model output. Rather than show numbers that cannot be trusted, TME stopped this step. The backtest and regimes are saved.'
     facts.push({ label: 'Largest gap', value: details.max_gap == null ? 'n/a' : String(details.max_gap), mono: true })
-    facts.push({ label: 'Limit', value: String(SHAP_ADDITIVITY_LIMIT), mono: true })
+    const limit = typeof details.epsilon === 'number' && Number.isFinite(details.epsilon) ? details.epsilon : SHAP_ADDITIVITY_LIMIT
+    facts.push({ label: 'Limit', value: String(limit), mono: true })
   } else if (code === 'rate_limited' && details.retry_after_seconds != null) {
     facts.push({ label: 'Retry after', value: `${details.retry_after_seconds} s`, mono: true })
   } else if (code === 'daily_cap_reached' && details.daily_cap != null) {

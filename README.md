@@ -26,6 +26,12 @@ The Features tab ranks features by mean absolute SHAP contribution, overall and 
 
 ![Features tab: SHAP importance table with one heat column per regime](docs/screenshots/features.png)
 
+## Verified reports
+
+The Report tab shows the five sections Claude wrote from the analysis JSON. Every number that matches the source data is underlined, the header badge counts verified numbers, and any number that does not match is highlighted and listed in a warning banner. A report can be regenerated without re-running the analysis.
+
+![Report tab: summary and performance sections with every number verified](docs/screenshots/report.png)
+
 ## Design choices
 
 - **User pickles never load in the API process.** Prediction and SHAP both run in the sandbox, which is designed for the gVisor `runsc` runtime in production; a missing runtime setting fails closed.
@@ -42,11 +48,13 @@ The Features tab ranks features by mean absolute SHAP contribution, overall and 
 
 ## Run locally
 
-Requirements: Python 3.11, Node.js 20 or later, Docker, a Supabase project and an Anthropic API key.
+Requirements: Python 3.11, Node.js 20 or later, Docker, a Supabase project and, for the written report, an Anthropic API key.
 
-Create the tables by running the SQL files in `backend/migrations/` in order in the Supabase SQL editor.
+The report is the only step that needs `ANTHROPIC_API_KEY`. Without it, an analysis still completes the backtest, regimes and SHAP steps, is saved with the status `partial`, and the dashboard shows the report as unavailable.
 
-Build the sandbox image and start the API:
+Supabase is required: create a project, then create the tables by running the SQL files in `backend/migrations/` in order in the Supabase SQL editor. Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` the API still starts and serves `/health`, `/demo-models` and `/indicators`, but every analysis request fails with HTTP 500 and the API log shows `SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured.` In the browser this shows up as "The server could not be reached".
+
+Build the sandbox image and set up the API:
 
 ```bash
 cd backend
@@ -55,15 +63,16 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --reload
 ```
 
-Fill `backend/.env` before starting the server:
+On Windows, activate the virtual environment with `venv\Scripts\activate` instead of `source venv/bin/activate`.
+
+Fill `backend/.env`, then start the API with `uvicorn app.main:app --reload`. The server refuses to start until `SANDBOX_DOCKER_RUNTIME` is set (`runc` for local development).
 
 | Purpose | Variables |
 | --- | --- |
-| Required | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `ENVIRONMENT`, `SANDBOX_DOCKER_RUNTIME` |
-| Report | `ANTHROPIC_MODEL`, `REPORT_MAX_TOKENS` |
+| Required | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ENVIRONMENT`, `SANDBOX_DOCKER_RUNTIME` |
+| Report | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `REPORT_MAX_TOKENS` |
 | Access and abuse limits | `CORS_ORIGINS`, `ALLOW_UPLOAD`, `TRUST_PROXY`, `IP_HASH_SALT`, `RATE_LIMIT_RUNS`, `RATE_LIMIT_WINDOW_SECONDS`, `DAILY_ANALYSIS_CAP` |
 | Input caps | `MAX_DATE_RANGE_YEARS`, `MAX_MODEL_FILE_BYTES`, `MAX_FEATURES`, `MAX_CSV_BYTES`, `MAX_CSV_ROWS` |
 | SHAP | `SHAP_SAMPLE_SIZE`, `SHAP_MIN_ROWS_PER_REGIME`, `SHAP_LOW_SAMPLE_THRESHOLD`, `SHAP_MAX_TRADE_ROWS`, `SHAP_BACKGROUND_ROWS`, `SHAP_KERNEL_NSAMPLES`, `SHAP_KERNEL_BACKGROUND_SIZE` |
@@ -79,7 +88,7 @@ npm ci
 npm run dev
 ```
 
-The app opens on http://localhost:5173. Set `VITE_API_BASE_URL` in `frontend/.env` if the API is not on http://127.0.0.1:8000.
+The app opens on http://localhost:5173. Set `VITE_API_BASE_URL` in `frontend/.env` if the API is not on http://127.0.0.1:8000. The API only accepts browser requests from the origins listed in `CORS_ORIGINS` (comma-separated; `.env.example` sets `http://localhost:5173`). With an empty value every request from the app is blocked and the app reports that the server could not be reached.
 
 Tests:
 
